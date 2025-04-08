@@ -1,0 +1,8 @@
+{
+	"name": "openpin-asset-proxy",
+	"main": "src/index.ts",
+	"compatibility_date": "2025-04-07",
+	"observability": {
+		"enabled": true
+	}
+}
