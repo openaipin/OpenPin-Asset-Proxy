@@ -1,47 +1,47 @@
-/**
- * Welcome to Cloudflare Workers! This is your first worker.
- *
- * - Run `npm run dev` in your terminal to start a development server
- * - Open a browser tab at http://localhost:8787/ to see your worker in action
- * - Run `npm run deploy` to publish your worker
- *
- * Bind resources to your worker in `wrangler.jsonc`. After adding bindings, a type definition for the
- * `Env` object can be regenerated with `npm run cf-typegen`.
- *
- * Learn more at https://developers.cloudflare.com/workers/
- */
-
-const GITHUB_BASE = 'https://github.com/';
+import { corsHeaders, GITHUB_BASE, isPathAllowed } from "./config";
 
 export default {
-	async fetch(request: Request): Promise<Response> {
-		const url = new URL(request.url);
-		const pathname = url.pathname;
+  async fetch(request: Request): Promise<Response> {
+    const { method } = request;
 
-		// Reconstruct the GitHub URL from the path
-		const target = GITHUB_BASE + pathname.slice(1); // Remove leading "/"
+    // Verify method allowed
+    if (method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: corsHeaders() });
+    }
+    if (method !== "GET") {
+      return new Response("Method Not Allowed", { status: 405, headers: corsHeaders() });
+    }
 
-		try {
-			const resp = await fetch(target, {
-				headers: {
-					// Required to follow GitHub's redirect to asset storage
-					'User-Agent': 'ghproxy-worker',
-				},
-			});
+    // Verify path whitelisted
+    const url = new URL(request.url);
+    const ghPath = url.pathname;
+    if (!isPathAllowed(ghPath)) {
+      return new Response("Forbidden: path not whitelisted", { status: 403, headers: corsHeaders() });
+    }
 
-			const headers = new Headers(resp.headers);
+    // Fetch upstream resource
+    const upstreamURL = GITHUB_BASE + ghPath;
+    let upstreamResp: Response;
+    try {
+      upstreamResp = await fetch(upstreamURL, {
+        headers: {
+          "User-Agent": "ghproxy-worker",
+        },
+      });
+    } catch (err) {
+      return new Response(`Upstream fetch failed: ${err}`, { status: 502, headers: corsHeaders() });
+    }
 
-			// Set CORS headers
-			headers.set('Access-Control-Allow-Origin', '*');
-			headers.set('Access-Control-Allow-Methods', 'GET');
-			headers.set('Access-Control-Allow-Headers', '*');
+    // Set CORS headers
+    const headers = new Headers(upstreamResp.headers);
+    Object.entries(corsHeaders()).forEach(([k, v]) => headers.set(k, v));
 
-			return new Response(resp.body, {
-				status: resp.status,
-				headers,
-			});
-		} catch (e) {
-			return new Response(`Error: ${e}`, { status: 500 });
-		}
-	},
+    // Encourage browser/CDN caching since GitHub release assets are immutable
+    headers.set("Cache-Control", "public, max-age=31536000, immutable");
+
+    return new Response(upstreamResp.body, {
+      status: upstreamResp.status,
+      headers,
+    });
+  },
 };
