@@ -3,7 +3,7 @@ import { corsHeaders, GITHUB_BASE, isPathAllowed } from "./config";
 export default {
   async fetch(
     request: Request,
-    env: { GITHUB_TOKEN: string }, // token from Worker secret
+    env: { GITHUB_TOKEN: string; CACHE_BUSTER: string },
     ctx: ExecutionContext
   ): Promise<Response> {
     const { method } = request;
@@ -20,14 +20,18 @@ export default {
     const url = new URL(request.url);
     const ghPath = url.pathname;
     if (!isPathAllowed(ghPath)) {
-      return new Response("Forbidden: path not whitelisted", { status: 403, headers: corsHeaders() });
+      return new Response("Forbidden: path not whitelisted", {
+        status: 403,
+        headers: corsHeaders(),
+      });
     }
 
     // Build upstream URL
     const upstreamURL = GITHUB_BASE + ghPath;
+    const cacheKey = upstreamURL + "/" + env.CACHE_BUSTER;
 
     // Check cache
-    const cached = await caches.default.match(upstreamURL);
+    const cached = await caches.default.match(cacheKey);
     if (cached) {
       const hdrs = new Headers(cached.headers);
       hdrs.set("X-Worker-Cache", "HIT");
@@ -60,11 +64,14 @@ export default {
     if (contentLength) {
       respHeaders.set("Content-Length", contentLength);
     }
-    respHeaders.set("Cache-Control", "public, max-age=31536000, immutable");
+    respHeaders.set("Cache-Control", "public, max-age=3600, immutable");
 
     // Create & cache response
-    const resp = new Response(upstreamResp.body, { status: upstreamResp.status, headers: respHeaders });
-    ctx.waitUntil(caches.default.put(upstreamURL, resp.clone()));
+    const resp = new Response(upstreamResp.body, {
+      status: upstreamResp.status,
+      headers: respHeaders,
+    });
+    ctx.waitUntil(caches.default.put(cacheKey, resp.clone()));
 
     return resp;
   },
