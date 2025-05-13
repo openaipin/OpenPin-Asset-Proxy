@@ -1,4 +1,3 @@
-import axios from "axios";
 import { corsHeaders, GITHUB_BASE, isPathAllowed } from "./config";
 
 export default {
