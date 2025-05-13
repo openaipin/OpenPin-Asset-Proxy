@@ -1,7 +1,11 @@
 import { corsHeaders, GITHUB_BASE, isPathAllowed } from "./config";
 
 export default {
-  async fetch(request: Request): Promise<Response> {
+  async fetch(
+    request: Request,
+    env: { GITHUB_TOKEN: string }, // token from Worker secret
+    ctx: ExecutionContext // lets us write to cache without blocking
+  ): Promise<Response> {
     const { method } = request;
 
     // Verify method allowed
@@ -19,13 +23,20 @@ export default {
       return new Response("Forbidden: path not whitelisted", { status: 403, headers: corsHeaders() });
     }
 
-    // Fetch upstream resource
+    // Check edge cache first ― GitHub assets are immutable
     const upstreamURL = GITHUB_BASE + ghPath;
+    const cacheKey = new Request(upstreamURL, request);
+    const cached = await caches.default.match(cacheKey);
+    if (cached) return cached;
+
+    // Fetch upstream resource (authenticated)
     let upstreamResp: Response;
+    console.log(env.GITHUB_TOKEN);
     try {
       upstreamResp = await fetch(upstreamURL, {
         headers: {
           "User-Agent": "ghproxy-worker",
+          Authorization: `Bearer ${env.GITHUB_TOKEN}`,
         },
       });
     } catch (err) {
@@ -39,9 +50,16 @@ export default {
     // Encourage browser/CDN caching since GitHub release assets are immutable
     headers.set("Cache-Control", "public, max-age=31536000, immutable");
 
-    return new Response(upstreamResp.body, {
+    const proxiedResp = new Response(upstreamResp.body, {
       status: upstreamResp.status,
       headers,
     });
+
+    // Save successful responses to cache (non-blocking)
+    if (upstreamResp.ok) {
+      ctx.waitUntil(caches.default.put(cacheKey, proxiedResp.clone()));
+    }
+
+    return proxiedResp;
   },
 };
