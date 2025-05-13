@@ -42,12 +42,14 @@ export default {
     // Fetch upstream resource (authenticated)
     let upstreamResp: Response;
     try {
-      upstreamResp = await axios.get(upstreamURL, {
+      upstreamResp = await fetch(upstreamURL, {
         headers: {
           "User-Agent": "ghproxy-worker",
           Authorization: `Bearer ${env.GITHUB_TOKEN}`,
         },
       });
+
+      if (!upstreamResp.ok) throw new Error("Request failed with code: " + upstreamResp.status);
     } catch (err) {
       console.error(err);
       return new Response(`Upstream fetch failed`, { status: 502, headers: corsHeaders() });
